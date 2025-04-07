@@ -21,7 +21,7 @@ class AmazonproductspiderSpider(scrapy.Spider):
     # new 
     # start_urls = [f'https://www.amazon.com/s?k=phone&i=mobile&rh=n%3A2335752011%2Cp_123%3A110955%257C146762%257C237204%257C254407%257C319106%257C329744%257C338933%257C358874%257C46655%257C473637%257C568349%2Cp_n_condition-type%3A6503240011&dc&page={i}&crid=VZIBEAHXCXRG&qid=1743764339&rnid=6503239011&sprefix=phone%2Caps%2C284&ref=sr_nr_p_n_condition-type_2&ds=v1%3AIjU2c0aUxE7Fr3xd9RvYh7NTIfZ3Ow3sQTENlKK2Ook' for i in range(1, 57)]
     # renewed. Их нужно переключать и определять файл куда они записываются в команде scrapy.crawl
-    start_urls = [f'https://www.amazon.com/s?k=phone&i=mobile&rh=n%3A2335752011%2Cp_123%3A110955%257C146762%257C237204%257C254407%257C319106%257C329744%257C338933%257C358874%257C46655%257C473637%257C568349%2Cp_n_condition-type%3A16907722011&dc&page={i}&crid=VZIBEAHXCXRG&qid=1743771507&rnid=6503239011&sprefix=phone%2Caps%2C284&ref=sr_nr_p_n_condition-type_1&ds=v1%3AbQUafN4x2egXTwTGw1Kzw502jYnIsrq3cz2wQ1UYfqQ' for i in range(1, 3)]
+    start_urls = [f'https://www.amazon.com/s?k=phone&i=mobile&rh=n%3A2335752011%2Cp_123%3A110955%257C146762%257C237204%257C254407%257C319106%257C329744%257C338933%257C358874%257C46655%257C473637%257C568349%2Cp_n_condition-type%3A16907722011&dc&page={i}&crid=VZIBEAHXCXRG&qid=1743771507&rnid=6503239011&sprefix=phone%2Caps%2C284&ref=sr_nr_p_n_condition-type_1&ds=v1%3AbQUafN4x2egXTwTGw1Kzw502jYnIsrq3cz2wQ1UYfqQ' for i in range(1, 36)]
     def start_requests(self):
         for url in self.start_urls:
             yield scrapy.Request(url= get_url(url), callback=self.parse_main_page)
@@ -46,29 +46,37 @@ class AmazonproductspiderSpider(scrapy.Spider):
         item['phone_full_name'] = response.xpath('//h1[@id="title"]/span/text()').get(default='Sorry bro').strip()
         item['phone_review_rating'] = response.xpath('//span[@id="acrPopover"]/span[@class="a-declarative"]/a/span/text()').get(default='Sorry bro').strip()
         item['phone_rate_number'] = response.xpath('//span[@id="acrCustomerReviewText"]/text()').get(default='Sorry bro').strip()
-        
-        price_blocks = response.xpath('//span[contains(@class, "priceToPay")]')
-        if not price_blocks:
-            self.logger.warning(f"No price block found at {response.url}")
-            item['phone_sale_price'] = 'Not available'
-            yield item
-            return
 
-        price_block = price_blocks[0]
-        price_whole = price_block.xpath('.//span[@class="a-price-whole"]/text()').get()
-        price_fraction = price_block.xpath('.//span[@class="a-price-fraction"]/text()').get()
-        if price_whole is None:
-            item['phone_sale_price'] = 'Sorry bro'
+        # Попытка 1: Стандартный способ (priceToPay)
+        price_whole = response.xpath('//span[contains(@class, "priceToPay")]//span[@class="a-price-whole"]/text()').get()
+        price_fraction = response.xpath('//span[contains(@class, "priceToPay")]//span[@class="a-price-fraction"]/text()').get()
+
+        if price_whole and price_fraction:
+            item['phone_sale_price'] = f"${price_whole.strip()}.{price_fraction.strip()}"
         else:
-            price_whole = price_whole.strip() if price_whole else ''
-            price_fraction = price_fraction.strip() if price_fraction else ''
-            item['phone_sale_price'] = '$' + price_whole + '.' + price_fraction
+            # Попытка 2: Альтернативная структура (apexPriceToPay)
+            sale_price_alt = response.xpath('//span[contains(@class, "apexPriceToPay")]//span[@class="a-offscreen"]/text()').get()
+            item['phone_sale_price'] = sale_price_alt.strip() if sale_price_alt else 'Not available'
+
+        list_price = response.xpath('//span[@class="a-price a-text-price"]//span[@class="a-offscreen"]/text()').get()
+        if not list_price:
+            # Альтернативная структура (в таблице)
+            list_price = response.xpath('//td[contains(text(), "List Price:")]/following-sibling::td//span[@class="a-offscreen"]/text()').get()
+        item['phone_list_price'] = list_price.strip() if list_price else 'Sorry bro'
+
+    
         
-        item['phone_list_price'] = response.xpath('//span[@class="a-price a-text-price"]//span[@class="a-offscreen"]/text()').get(default='Sorry bro').strip()
-        item['phone_discount'] = str(response.xpath(
-                                                '//span[contains(@class, "savingsPercentage")]/text() | '
-                                                '//span[contains(@class, "savingsPercentage")]/preceding::span[contains(@class, "aok-offscreen")][1]/text()'
-                                                ).re_first(r'(\d+)%') or '0') + '%'
+        discount = response.xpath(
+            '//span[contains(@class, "savingsPercentage")]/text() | '
+            '//span[contains(@class, "savingsPercentage")]/preceding::span[contains(@class, "aok-offscreen")][1]/text()'
+        ).re_first(r'(\d+)%')
+
+        if not discount:
+            # Попытка 2: Альтернативный блок скидок (если есть)
+            discount = response.xpath('//td[contains(text(), "List Price:")]/following-sibling::td//span[contains(@class, "a-price")]/following-sibling::span/text()').re_first(r'(\d+)%')
+
+        item['phone_discount'] = str(discount or '0') + '%'
+
         item['phone_brand'] = response.xpath('//tr[contains(@class, "po-brand")]/td[@class="a-span9"]/span/text()').get(default='Sorry bro').strip()
 
         # other tech info
