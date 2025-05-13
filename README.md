@@ -1,1 +1,4 @@
-# metrics_project_price
+# Добро пожаловать
+
+Основной отчёт нашего исследования: [report.pdf](./report.pdf)
+
